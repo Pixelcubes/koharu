@@ -46,6 +46,10 @@ pub enum TextDirection {
 /// original source text. The writing-mode decision prefers this over bbox
 /// aspect ratio for CJK content, so a wide-manga bubble with vertical
 /// Japanese doesn't get flipped to horizontal just because of its shape.
+/// It is overridden when translating into Japanese: `writing_mode_for_block`
+/// always chooses vertical-RL for CJK output in that case, since this flag
+/// describes the original (often non-CJK) source text's shape, not how a
+/// Japanese translation should be typeset.
 #[derive(Debug, Clone, Default)]
 pub struct RenderBlock {
     pub x: f32,

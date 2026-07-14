@@ -174,7 +174,8 @@ impl Renderer {
         // once to record per-ID bboxes and then answers seed→bbox
         // lookups in O(seed_area).
         let bubble_index: Option<BubbleIndex> = bubble_mask.map(|m| BubbleIndex::new(m.to_luma8()));
-        let layout_boxes = resolve_layout_boxes(blocks, bubble_index.as_ref());
+        let layout_boxes =
+            resolve_layout_boxes(blocks, bubble_index.as_ref(), opts.target_language.as_deref());
         let bubble_mask = bubble_index.as_ref().map(BubbleIndex::mask);
 
         let mut rendered_blocks = Vec::with_capacity(blocks.len());
@@ -251,7 +252,7 @@ impl Renderer {
         let color =
             resolve_text_color(block.style.as_ref(), &style, block.font_prediction.as_ref());
 
-        let writing_mode = writing_mode_for_block(&layout_source);
+        let writing_mode = writing_mode_for_block(&layout_source, target_language);
         // Translations default to centre alignment inside a bubble — each
         // line sits centred above/below the others, matching manga
         // typesetting convention. Explicit `style.text_align` wins if set.
@@ -731,6 +732,7 @@ struct ResolvedLayoutBox {
 fn resolve_layout_boxes(
     blocks: &[RenderBlockInput],
     bubble_index: Option<&BubbleIndex>,
+    target_language: Option<&str>,
 ) -> Vec<ResolvedLayoutBox> {
     let Some(bubble_index) = bubble_index else {
         return blocks
@@ -756,7 +758,7 @@ fn resolve_layout_boxes(
             None
         } else {
             let layout_source = layout_source_from_input(block, translation);
-            let writing_mode = writing_mode_for_block(&layout_source);
+            let writing_mode = writing_mode_for_block(&layout_source, target_language);
             bubble_index.lookup_match(seed_box, writing_mode)
         };
         if let Some(matched) = bubble_match {
@@ -1163,7 +1165,7 @@ mod tests {
             block(120.0, 30.0, 40.0, 80.0, "world"),
         ];
 
-        let layout_boxes = resolve_layout_boxes(&blocks, Some(&index));
+        let layout_boxes = resolve_layout_boxes(&blocks, Some(&index), None);
 
         assert_eq!(layout_boxes[0].layout_box, seed_layout_box(&blocks[0]));
         assert_eq!(layout_boxes[0].bubble_id, Some(1));
@@ -1178,7 +1180,7 @@ mod tests {
         let index = BubbleIndex::new(mask);
         let blocks = vec![block(70.0, 70.0, 20.0, 30.0, "hello")];
 
-        let layout_boxes = resolve_layout_boxes(&blocks, Some(&index));
+        let layout_boxes = resolve_layout_boxes(&blocks, Some(&index), None);
 
         assert!(layout_boxes[0].layout_box.width > blocks[0].transform.width);
         assert!(layout_boxes[0].layout_box.height > blocks[0].transform.height);
@@ -1194,7 +1196,7 @@ mod tests {
         locked.lock_layout_box = true;
         let blocks = vec![locked];
 
-        let layout_boxes = resolve_layout_boxes(&blocks, Some(&index));
+        let layout_boxes = resolve_layout_boxes(&blocks, Some(&index), None);
 
         assert_eq!(layout_boxes[0].layout_box, seed_layout_box(&blocks[0]));
         assert_eq!(layout_boxes[0].bubble_id, None);

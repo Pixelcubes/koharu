@@ -67,15 +67,19 @@ In concrete terms:
 
 ## How Koharu chooses vertical layout
 
-Koharu does not blindly force all CJK text into vertical mode. The current heuristic in `text/script.rs` is:
+Koharu does not blindly force all CJK text into vertical mode. `writing_mode_for_block` in `text/script.rs` decides per block, in this order:
 
-- if the translation contains CJK text and the block is taller than it is wide, use `VerticalRl`
-- otherwise, keep the block horizontal
+- if the translation is not CJK text, always use `Horizontal`
+- if the target language is Japanese, always use `VerticalRl` for CJK output — a Japanese translation is expected to read top-to-bottom, right-to-left regardless of the original bubble's shape
+- otherwise, prefer the OCR/detector's recorded `source_direction` for the block when available
+- if no `source_direction` was recorded, fall back to bbox geometry: taller than wide uses `VerticalRl`, otherwise `Horizontal`
 
-That means vertical layout depends on both:
+That means vertical layout depends on:
 
 - script detection
-- the geometry of the detected or user-adjusted text box
+- the target translation language
+- the OCR-detected reading axis of the original text, when known
+- the geometry of the detected or user-adjusted text box, as a last resort
 
 This is simple on purpose. It matches a large share of manga bubble text, and it avoids turning every mixed-script caption into vertical text just because it contains one Japanese character.
 

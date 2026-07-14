@@ -5,7 +5,7 @@ use unicode_bidi::BidiInfo;
 use crate::layout::WritingMode;
 use crate::types::{RenderBlock, TextDirection};
 
-pub fn writing_mode_for_block(block: &RenderBlock) -> WritingMode {
+pub fn writing_mode_for_block(block: &RenderBlock, target_language: Option<&str>) -> WritingMode {
     if block.text.is_empty() {
         return WritingMode::Horizontal;
     }
@@ -13,6 +13,14 @@ pub fn writing_mode_for_block(block: &RenderBlock) -> WritingMode {
     // an English translation in a tall manga bubble still reads left-to-right.
     if !is_cjk_text(&block.text) {
         return WritingMode::Horizontal;
+    }
+    // A Japanese translation is conventionally typeset top-to-bottom,
+    // right-to-left, regardless of the original bubble's geometry.
+    // `source_direction` reflects the *original* (often non-CJK, horizontally
+    // shaped) source text's bounding box, which isn't a meaningful signal for
+    // how a Japanese translation should read — so target language wins here.
+    if is_japanese_target(target_language) {
+        return WritingMode::VerticalRl;
     }
     // CJK content: prefer the OCR/detector's source direction when available,
     // so bubble aspect ratio doesn't override a trusted signal. The bbox
@@ -29,6 +37,15 @@ pub fn writing_mode_for_block(block: &RenderBlock) -> WritingMode {
             }
         }
     }
+}
+
+fn is_japanese_target(target_language: Option<&str>) -> bool {
+    let Some(lang) = target_language else {
+        return false;
+    };
+    let lang = lang.trim();
+    let primary = lang.split(['-', '_']).next().unwrap_or("");
+    primary.eq_ignore_ascii_case("ja") || lang.eq_ignore_ascii_case("japanese")
 }
 
 pub(crate) struct ScriptFlags {
@@ -234,7 +251,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(writing_mode_for_block(&block), WritingMode::VerticalRl);
+        assert_eq!(writing_mode_for_block(&block, None), WritingMode::VerticalRl);
     }
 
     #[test]
@@ -246,7 +263,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(writing_mode_for_block(&block), WritingMode::Horizontal);
+        assert_eq!(writing_mode_for_block(&block, None), WritingMode::Horizontal);
     }
 
     #[test]
@@ -261,7 +278,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(writing_mode_for_block(&block), WritingMode::VerticalRl);
+        assert_eq!(writing_mode_for_block(&block, None), WritingMode::VerticalRl);
     }
 
     #[test]
@@ -276,7 +293,65 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(writing_mode_for_block(&block), WritingMode::Horizontal);
+        assert_eq!(writing_mode_for_block(&block, None), WritingMode::Horizontal);
+    }
+
+    #[test]
+    fn writing_mode_forces_vertical_for_japanese_target_despite_horizontal_source() {
+        // A wide bubble whose ORIGINAL (non-Japanese) text was detected as
+        // horizontal must not force the Japanese translation horizontal —
+        // Japanese output should read top-to-bottom, right-to-left.
+        let block = RenderBlock {
+            width: 200.0,
+            height: 60.0,
+            text: "縦書き".to_string(),
+            source_direction: Some(crate::types::TextDirection::Horizontal),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            writing_mode_for_block(&block, Some("ja")),
+            WritingMode::VerticalRl
+        );
+        assert_eq!(
+            writing_mode_for_block(&block, Some("ja-JP")),
+            WritingMode::VerticalRl
+        );
+        assert_eq!(
+            writing_mode_for_block(&block, Some("Japanese")),
+            WritingMode::VerticalRl
+        );
+    }
+
+    #[test]
+    fn writing_mode_ignores_japanese_target_for_non_cjk_text() {
+        let block = RenderBlock {
+            width: 40.0,
+            height: 120.0,
+            text: "HELLO".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            writing_mode_for_block(&block, Some("ja")),
+            WritingMode::Horizontal
+        );
+    }
+
+    #[test]
+    fn writing_mode_unaffected_by_non_japanese_target() {
+        let block = RenderBlock {
+            width: 200.0,
+            height: 60.0,
+            text: "缩写".to_string(),
+            source_direction: Some(crate::types::TextDirection::Horizontal),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            writing_mode_for_block(&block, Some("zh")),
+            WritingMode::Horizontal
+        );
     }
 
     #[test]
