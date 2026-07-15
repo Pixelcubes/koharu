@@ -199,4 +199,52 @@ describe('RenderControlsPanel Font Assignment', () => {
     expect(op.updateNode.id).toBe('t1')
     expect(op.updateNode.patch.data.text.style.color).toEqual([0, 0, 0, 255])
   })
+
+  it('applying a direction override to a singular text box only updates that box', async () => {
+    renderWithQuery(<RenderControlsPanel />)
+
+    // Select node t1
+    useSelectionStore.getState().select('t1', false)
+
+    const verticalButton = await screen.findByTestId('render-direction-vertical')
+    await userEvent.click(verticalButton)
+
+    await waitFor(() => expect(sceneActions.applyOp).toHaveBeenCalled())
+    const lastOp = (sceneActions.applyOp as any).mock.calls[0][0]
+    expect(lastOp).toHaveProperty('updateNode')
+    expect(lastOp.updateNode.id).toBe('t1')
+    expect(lastOp.updateNode.patch.data.text.directionOverride).toBe('vertical')
+  })
+
+  it('bulk applying a direction override (with selection) updates all selected boxes', async () => {
+    renderWithQuery(<RenderControlsPanel />)
+
+    // Select both nodes
+    useSelectionStore.getState().selectMany(['t1', 't2'])
+
+    const horizontalButton = await screen.findByTestId('render-direction-horizontal')
+    await userEvent.click(horizontalButton)
+
+    await waitFor(() => expect(sceneActions.applyOp).toHaveBeenCalled())
+    const lastOp = (sceneActions.applyOp as any).mock.calls[0][0]
+    expect(lastOp).toHaveProperty('batch')
+    expect(lastOp.batch.ops).toHaveLength(2)
+    for (const op of lastOp.batch.ops) {
+      expect(op.updateNode.patch.data.text.directionOverride).toBe('horizontal')
+    }
+  })
+
+  it('changing direction with no selection updates every block on the page', async () => {
+    renderWithQuery(<RenderControlsPanel />)
+
+    // No selection
+
+    const verticalButton = await screen.findByTestId('render-direction-vertical')
+    await userEvent.click(verticalButton)
+
+    await waitFor(() => expect(sceneActions.applyOp).toHaveBeenCalled())
+    const lastOp = (sceneActions.applyOp as any).mock.calls[0][0]
+    expect(lastOp).toHaveProperty('batch')
+    expect(lastOp.batch.ops).toHaveLength(2)
+  })
 })

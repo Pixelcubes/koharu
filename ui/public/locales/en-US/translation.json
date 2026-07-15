@@ -232,6 +232,8 @@
     "alignLeft": "Align left",
     "alignCenter": "Align center",
     "alignRight": "Align right",
+    "directionVertical": "Vertical (top-to-bottom, right-to-left)",
+    "directionHorizontal": "Horizontal (left-to-right)",
     "effectItalic": "Italic",
     "effectBold": "Bold",
     "effectBorder": "Border",

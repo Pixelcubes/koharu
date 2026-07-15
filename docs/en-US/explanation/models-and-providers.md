@@ -147,3 +147,14 @@ For background theory behind the model categories on this page, see:
 - [Image segmentation on Wikipedia](https://en.wikipedia.org/wiki/Image_segmentation)
 - [OCR on Wikipedia](https://en.wikipedia.org/wiki/Optical_character_recognition)
 - [Transformer architecture on Wikipedia](<https://en.wikipedia.org/wiki/Transformer_(deep_learning_architecture)>)
+
+## Addendum
+!!! warning "Known bug: MIT 48px OCR misreads most bubble text"
+
+    `mit48px-ocr` is a single-line recognizer: it expects each line of text to already be segmented and rotated to horizontal before it sees it. No built-in detector currently populates the per-line polygon data it needs for that step, so in practice it receives the whole speech-bubble bounding box unrotated, then squashed to fit its expected input height. For a tall vertical-text bubble this can shrink the crop to only a few pixels wide, and the model produces near-random, low-information output (single digits, unrelated characters) rather than a real reading.
+
+    This reproduces reliably on ordinary manga bubbles, not just unusual layouts. Until the detector emits per-line polygons, prefer `PaddleOCR-VL-1.5` (multilingual, general-purpose) or `Manga OCR` (Japanese-only, but accurate on real Japanese manga dialogue) instead of `mit48px-ocr`.
+
+!!! warning "Known bug: PaddleOCR-VL misrecognises certain stylised SFX texts
+
+    for certain SFX texts (e.g. a concrete example: "HEH-HEHE"), it is misrecognised in OCR as "工工工工工工工工"

@@ -220,6 +220,8 @@
     "alignLeft": "왼쪽 정렬",
     "alignCenter": "가운데 정렬",
     "alignRight": "오른쪽 정렬",
+    "directionVertical": "세로쓰기 (위에서 아래, 오른쪽에서 왼쪽)",
+    "directionHorizontal": "가로쓰기 (왼쪽에서 오른쪽)",
     "effectItalic": "기울임꼴",
     "effectBold": "굵게",
     "effectBorder": "테두리",

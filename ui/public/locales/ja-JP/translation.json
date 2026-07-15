@@ -198,6 +198,8 @@
     "alignLeft": "左揃え",
     "alignCenter": "中央揃え",
     "alignRight": "右揃え",
+    "directionVertical": "縦書き（上から下、右から左）",
+    "directionHorizontal": "横書き（左から右）",
     "fontLabel": "フォント",
     "fontPlaceholder": "フォントを選択",
     "fontColorLabel": "フォントカラー",

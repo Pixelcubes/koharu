@@ -482,6 +482,7 @@ mod tests {
             height: 20.0,
             text: "hello".into(),
             source_direction: None,
+            direction_override: None,
         };
         assert_eq!(
             layout_box_from_block(&block),

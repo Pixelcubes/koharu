@@ -285,6 +285,13 @@ pub struct TextData {
     pub source_direction: Option<TextDirection>,
     #[serde(default)]
     pub rendered_direction: Option<TextDirection>,
+    /// Explicit user choice of writing direction for this block, set only by
+    /// a manual UI action. Unlike `rendered_direction` (a record of what the
+    /// last render actually produced, rewritten on every render), this field
+    /// is never written by the automatic pipeline — it is the one signal
+    /// `writing_mode_for_block` treats as authoritative over every heuristic.
+    #[serde(default)]
+    pub direction_override: Option<TextDirection>,
     #[serde(default)]
     pub line_polygons: Option<Vec<[[f32; 2]; 4]>>,
     #[serde(default)]

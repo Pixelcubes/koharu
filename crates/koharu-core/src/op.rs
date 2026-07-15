@@ -198,6 +198,8 @@ pub struct TextDataPatch {
     #[serde(default)]
     pub rendered_direction: Option<Option<TextDirection>>,
     #[serde(default)]
+    pub direction_override: Option<Option<TextDirection>>,
+    #[serde(default)]
     pub line_polygons: Option<Option<Vec<[[f32; 2]; 4]>>>,
     #[serde(default)]
     pub rotation_deg: Option<Option<f32>>,
@@ -679,6 +681,10 @@ fn capture_prev_text(kind: &NodeKind, p: &TextDataPatch) -> TextDataPatch {
             .rendered_direction
             .as_ref()
             .map(|_| data.rendered_direction),
+        direction_override: p
+            .direction_override
+            .as_ref()
+            .map(|_| data.direction_override),
         line_polygons: p.line_polygons.as_ref().map(|_| data.line_polygons.clone()),
         rotation_deg: p.rotation_deg.as_ref().map(|_| data.rotation_deg),
         detected_font_size_px: p
@@ -752,6 +758,9 @@ fn apply_text_patch(t: &mut TextData, p: &TextDataPatch) {
     }
     if let Some(v) = p.rendered_direction {
         t.rendered_direction = v;
+    }
+    if let Some(v) = p.direction_override {
+        t.direction_override = v;
     }
     if let Some(v) = &p.line_polygons {
         t.line_polygons = v.clone();

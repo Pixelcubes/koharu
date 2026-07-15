@@ -199,6 +199,8 @@
     "alignLeft": "Alinhar à esquerda",
     "alignCenter": "Centralizar",
     "alignRight": "Alinhar à direita",
+    "directionVertical": "Vertical (de cima para baixo, da direita para a esquerda)",
+    "directionHorizontal": "Horizontal (da esquerda para a direita)",
     "effectItalic": "Itálico",
     "effectBold": "Negrito",
     "effectBorder": "Contorno",

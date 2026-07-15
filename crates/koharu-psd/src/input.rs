@@ -74,6 +74,7 @@ pub struct PsdTextBlock {
     pub font_prediction: Option<PsdFontPrediction>,
     pub source_direction: Option<PsdTextDirection>,
     pub rendered_direction: Option<PsdTextDirection>,
+    pub direction_override: Option<PsdTextDirection>,
     pub detected_font_size_px: Option<f32>,
     /// Index into `PsdDocument.fonts`.
     pub font_index: Option<usize>,

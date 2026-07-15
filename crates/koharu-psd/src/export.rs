@@ -655,7 +655,11 @@ fn write_image_data(
 }
 
 fn infer_orientation(block: &PsdTextBlock) -> TextOrientation {
-    match block.rendered_direction.or(block.source_direction) {
+    match block
+        .direction_override
+        .or(block.rendered_direction)
+        .or(block.source_direction)
+    {
         Some(PsdTextDirection::Vertical) => TextOrientation::Vertical,
         _ => TextOrientation::Horizontal,
     }
@@ -788,6 +792,17 @@ mod tests {
             infer_orientation(&vertical_block),
             TextOrientation::Vertical
         );
+    }
+
+    #[test]
+    fn orientation_prefers_direction_override_over_rendered_and_source() {
+        let block = PsdTextBlock {
+            source_direction: Some(PsdTextDirection::Vertical),
+            rendered_direction: Some(PsdTextDirection::Vertical),
+            direction_override: Some(PsdTextDirection::Horizontal),
+            ..Default::default()
+        };
+        assert_eq!(infer_orientation(&block), TextOrientation::Horizontal);
     }
 
     #[test]

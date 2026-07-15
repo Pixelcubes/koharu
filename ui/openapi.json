@@ -3056,6 +3056,16 @@
           "detector": {
             "type": ["string", "null"]
           },
+          "directionOverride": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextDirection"
+              }
+            ]
+          },
           "fontPrediction": {
             "oneOf": [
               {
@@ -3163,6 +3173,16 @@
           },
           "detector": {
             "type": ["string", "null"]
+          },
+          "directionOverride": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextDirection"
+              }
+            ]
           },
           "fontPrediction": {
             "oneOf": [

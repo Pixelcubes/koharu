@@ -31,6 +31,7 @@ use tracing::Instrument;
 use crate::blobs::BlobStore;
 use crate::llm;
 use crate::pipeline::artifacts::Artifact;
+use crate::pipeline::{WarningSink, WarningTick};
 use crate::renderer;
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,51 @@ pub struct EngineCtx<'a> {
     pub options: &'a PipelineRunOptions,
     pub llm: &'a llm::Model,
     pub renderer: &'a renderer::Renderer,
+    /// 0-based index of `page` within the current run's page list, and the
+    /// total page count — needed to build a [`WarningTick`] for sub-step
+    /// (partial/non-fatal) failures that don't warrant failing the whole
+    /// engine run.
+    pub page_index: usize,
+    pub total_pages: usize,
+    pub warnings: Option<&'a WarningSink>,
+}
+
+impl EngineCtx<'_> {
+    /// Report a non-fatal, sub-step issue (e.g. one block out of many failed
+    /// to render) without failing the engine's whole `run()`. Unlike an
+    /// `Err` return, this doesn't skip the rest of the page's pipeline
+    /// steps — it's purely a "here's something you should know" signal that
+    /// reaches the same UI warning surface as a full step failure.
+    pub fn warn(&self, step_id: &str, message: impl Into<String>) {
+        emit_warning(
+            self.warnings,
+            self.page_index,
+            self.total_pages,
+            step_id,
+            message,
+        );
+    }
+}
+
+/// Free-function core of [`EngineCtx::warn`], factored out so it's testable
+/// without constructing a full `EngineCtx` (which needs real `Scene`,
+/// `BlobStore`, `RuntimeManager`, `llm::Model`, and `renderer::Renderer`
+/// instances that `warn` itself never touches).
+fn emit_warning(
+    sink: Option<&WarningSink>,
+    page_index: usize,
+    total_pages: usize,
+    step_id: &str,
+    message: impl Into<String>,
+) {
+    if let Some(sink) = sink {
+        sink(WarningTick {
+            step_id: step_id.to_string(),
+            page_index,
+            total_pages,
+            message: message.into(),
+        });
+    }
 }
 
 /// Options threaded through a pipeline run.
@@ -196,4 +242,35 @@ pub fn build_order(infos: &[&EngineInfo]) -> Result<Vec<usize>> {
     let order = toposort(&g, None)
         .map_err(|c| anyhow::anyhow!("cycle at '{}'", infos[g[c.node_id()]].id))?;
     Ok(order.into_iter().map(|n| g[n]).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    #[test]
+    fn emit_warning_dispatches_to_sink_with_correct_fields() {
+        let received: Arc<Mutex<Vec<WarningTick>>> = Arc::new(Mutex::new(Vec::new()));
+        let received_c = received.clone();
+        let sink: WarningSink = Arc::new(move |tick| received_c.lock().unwrap().push(tick));
+
+        emit_warning(Some(&sink), 2, 5, "koharu-renderer", "block failed: oops");
+
+        let ticks = received.lock().unwrap();
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].step_id, "koharu-renderer");
+        assert_eq!(ticks[0].page_index, 2);
+        assert_eq!(ticks[0].total_pages, 5);
+        assert_eq!(ticks[0].message, "block failed: oops");
+    }
+
+    #[test]
+    fn emit_warning_without_a_sink_does_not_panic() {
+        // `warnings: None` is the normal case for synchronous, non-batch
+        // callers (e.g. the repair-brush endpoint) that don't wire up the
+        // pipeline's warning stream. `warn()` must be a safe no-op there.
+        emit_warning(None, 0, 1, "koharu-renderer", "unheard warning");
+    }
 }

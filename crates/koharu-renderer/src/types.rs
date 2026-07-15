@@ -42,6 +42,10 @@ pub enum TextDirection {
 /// `text` is the string to render (typically the translation). Empty-text blocks
 /// should be filtered out by the caller; the renderer assumes `text` is non-empty.
 ///
+/// `direction_override` is an explicit user choice and takes priority over
+/// every other signal `writing_mode_for_block` considers, including the
+/// Japanese-forces-vertical rule and `source_direction` below.
+///
 /// `source_direction` is the OCR/detector's recorded reading axis for the
 /// original source text. The writing-mode decision prefers this over bbox
 /// aspect ratio for CJK content, so a wide-manga bubble with vertical
@@ -58,4 +62,5 @@ pub struct RenderBlock {
     pub height: f32,
     pub text: String,
     pub source_direction: Option<TextDirection>,
+    pub direction_override: Option<TextDirection>,
 }

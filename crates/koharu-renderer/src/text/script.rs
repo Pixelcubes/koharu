@@ -6,6 +6,14 @@ use crate::layout::WritingMode;
 use crate::types::{RenderBlock, TextDirection};
 
 pub fn writing_mode_for_block(block: &RenderBlock, target_language: Option<&str>) -> WritingMode {
+    // An explicit user choice always wins — a manual override that heuristics
+    // could veto (Japanese-forces-vertical, non-CJK-forces-horizontal, etc.)
+    // wouldn't really be an override.
+    match block.direction_override {
+        Some(TextDirection::Vertical) => return WritingMode::VerticalRl,
+        Some(TextDirection::Horizontal) => return WritingMode::Horizontal,
+        None => {}
+    }
     if block.text.is_empty() {
         return WritingMode::Horizontal;
     }
@@ -321,6 +329,62 @@ mod tests {
             writing_mode_for_block(&block, Some("Japanese")),
             WritingMode::VerticalRl
         );
+    }
+
+    #[test]
+    fn direction_override_wins_over_japanese_forces_vertical_rule() {
+        let block = RenderBlock {
+            width: 40.0,
+            height: 120.0,
+            text: "縦書き".to_string(),
+            direction_override: Some(crate::types::TextDirection::Horizontal),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            writing_mode_for_block(&block, Some("ja")),
+            WritingMode::Horizontal
+        );
+    }
+
+    #[test]
+    fn direction_override_wins_over_non_cjk_forces_horizontal_rule() {
+        let block = RenderBlock {
+            width: 40.0,
+            height: 120.0,
+            text: "HELLO".to_string(),
+            direction_override: Some(crate::types::TextDirection::Vertical),
+            ..Default::default()
+        };
+
+        assert_eq!(writing_mode_for_block(&block, None), WritingMode::VerticalRl);
+    }
+
+    #[test]
+    fn direction_override_wins_over_conflicting_source_direction() {
+        let block = RenderBlock {
+            width: 200.0,
+            height: 60.0,
+            text: "縦書き".to_string(),
+            source_direction: Some(crate::types::TextDirection::Horizontal),
+            direction_override: Some(crate::types::TextDirection::Vertical),
+            ..Default::default()
+        };
+
+        assert_eq!(writing_mode_for_block(&block, None), WritingMode::VerticalRl);
+    }
+
+    #[test]
+    fn direction_override_none_falls_through_to_existing_behavior() {
+        let block = RenderBlock {
+            width: 40.0,
+            height: 120.0,
+            text: "縦書き".to_string(),
+            direction_override: None,
+            ..Default::default()
+        };
+
+        assert_eq!(writing_mode_for_block(&block, None), WritingMode::VerticalRl);
     }
 
     #[test]

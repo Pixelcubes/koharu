@@ -559,6 +559,9 @@ async fn put_mask(
             options: &options,
             llm: &app.llm,
             renderer: &app.renderer,
+            page_index: 0,
+            total_pages: 1,
+            warnings: None,
         };
 
         // 3. Run Engine (Synchronously for this request)

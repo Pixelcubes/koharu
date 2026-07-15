@@ -198,6 +198,8 @@
     "alignLeft": "По левому краю",
     "alignCenter": "По центру",
     "alignRight": "По правому краю",
+    "directionVertical": "Вертикально (сверху вниз, справа налево)",
+    "directionHorizontal": "Горизонтально (слева направо)",
     "fontLabel": "Шрифт",
     "fontPlaceholder": "Выберите шрифт",
     "fontColorLabel": "Цвет шрифта",

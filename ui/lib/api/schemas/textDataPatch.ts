@@ -20,6 +20,7 @@ export interface TextDataPatch {
   detectedFontSizePx?: number | null
   /** @nullable */
   detector?: string | null
+  directionOverride?: null | TextDirection
   fontPrediction?: null | FontPrediction
   /** @nullable */
   linePolygons?: number[][][] | null

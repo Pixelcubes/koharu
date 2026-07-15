@@ -64,6 +64,7 @@ impl Engine for Model {
                     font_prediction: t.font_prediction.clone(),
                     source_direction: t.source_direction,
                     rendered_direction: t.rendered_direction,
+                    direction_override: t.direction_override,
                     lock_layout_box: t.lock_layout_box,
                 })
             })
@@ -93,6 +94,22 @@ impl Engine for Model {
             &inputs,
             &page_opts,
         )?;
+
+        // A failed block keeps its last successfully-rendered sprite (no Op
+        // is emitted for it below) — without this, that would look like a
+        // silent no-op to the user (e.g. a direction toggle that appears to
+        // do nothing). Surface it as a visible warning instead.
+        for (node_id, error) in &output.failed_blocks {
+            let snippet: String = inputs
+                .iter()
+                .find(|i| &i.node_id == node_id)
+                .map(|i| i.translation.chars().take(24).collect())
+                .unwrap_or_default();
+            ctx.warn(
+                "koharu-renderer",
+                format!("block {node_id} (\"{snippet}\") failed to render: {error}"),
+            );
+        }
 
         // Upload sprites + compose ops.
         let mut ops = Vec::with_capacity(output.blocks.len() + 1);

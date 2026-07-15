@@ -47,6 +47,7 @@ pub struct RenderBlockInput {
     pub font_prediction: Option<FontPrediction>,
     pub source_direction: Option<TextDirection>,
     pub rendered_direction: Option<TextDirection>,
+    pub direction_override: Option<TextDirection>,
     pub lock_layout_box: bool,
 }
 
@@ -73,6 +74,11 @@ pub struct RenderedBlock {
 pub struct RenderOutput {
     pub final_render: DynamicImage,
     pub blocks: Vec<RenderedBlock>,
+    /// Blocks whose render failed. Non-fatal: `render_page` still succeeds
+    /// and composites every block that *did* render, but the caller (the
+    /// pipeline engine) surfaces these as warnings so a stale sprite from a
+    /// prior successful render doesn't silently masquerade as "up to date".
+    pub failed_blocks: Vec<(NodeId, String)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +185,7 @@ impl Renderer {
         let bubble_mask = bubble_index.as_ref().map(BubbleIndex::mask);
 
         let mut rendered_blocks = Vec::with_capacity(blocks.len());
+        let mut failed_blocks = Vec::new();
         for (block, layout_box) in blocks.iter().zip(layout_boxes.iter().copied()) {
             match self.render_one(
                 block,
@@ -193,7 +200,10 @@ impl Renderer {
             ) {
                 Ok(Some(out)) => rendered_blocks.push(out),
                 Ok(None) => {}
-                Err(e) => tracing::warn!(node = %block.node_id, "render failed: {e:#}"),
+                Err(e) => {
+                    tracing::warn!(node = %block.node_id, "render failed: {e:#}");
+                    failed_blocks.push((block.node_id, format!("{e:#}")));
+                }
             }
         }
 
@@ -209,6 +219,7 @@ impl Renderer {
         Ok(RenderOutput {
             final_render: DynamicImage::ImageRgba8(canvas),
             blocks: rendered_blocks,
+            failed_blocks,
         })
     }
 
@@ -848,6 +859,7 @@ fn layout_source_from_input(block: &RenderBlockInput, translation: &str) -> Rend
         height: block.transform.height.max(1.0),
         text: translation.to_string(),
         source_direction: block.source_direction.map(core_direction_to_renderer),
+        direction_override: block.direction_override.map(core_direction_to_renderer),
     }
 }
 
@@ -1203,6 +1215,36 @@ mod tests {
     }
 
     #[test]
+    fn direction_override_changes_bubble_box_matching() {
+        // English text auto-resolves to Horizontal (non-CJK always does), so
+        // an override to Vertical is the only thing that can flip this
+        // block's matched safe-area box — proving `resolve_layout_boxes`
+        // (bubble-box sizing) consults the same override signal as
+        // `render_one` (actual glyph layout), so the two can't disagree.
+        let mut mask = GrayImage::from_pixel(200, 200, Luma([0u8]));
+        paint_rect(&mut mask, 20, 20, 180, 180, 1);
+        let index = BubbleIndex::new(mask);
+
+        let horizontal_block = block(70.0, 70.0, 20.0, 30.0, "hello");
+        let horizontal_boxes =
+            resolve_layout_boxes(&[horizontal_block.clone()], Some(&index), None);
+
+        let mut vertical_override_block = horizontal_block.clone();
+        vertical_override_block.direction_override = Some(TextDirection::Vertical);
+        let vertical_boxes =
+            resolve_layout_boxes(&[vertical_override_block], Some(&index), None);
+
+        assert_ne!(
+            horizontal_boxes[0].layout_box,
+            vertical_boxes[0].layout_box
+        );
+        // The vertical safe-area uses a larger padding fraction than
+        // horizontal (see `SAFE_PADDING_FRAC_VERTICAL` in koharu-renderer),
+        // so the overridden vertical box should be more inset (narrower).
+        assert!(vertical_boxes[0].layout_box.width < horizontal_boxes[0].layout_box.width);
+    }
+
+    #[test]
     fn mask_collision_detects_alpha_outside_matched_bubble() {
         let mut mask = GrayImage::from_pixel(10, 10, Luma([0u8]));
         paint_rect(&mut mask, 2, 2, 8, 8, 1);
@@ -1263,6 +1305,7 @@ mod tests {
             font_prediction: None,
             source_direction: None,
             rendered_direction: None,
+            direction_override: None,
             lock_layout_box: false,
         }
     }

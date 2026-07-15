@@ -5,9 +5,11 @@ import {
   AlignLeftIcon,
   AlignRightIcon,
   BoldIcon,
+  Columns3Icon,
   ItalicIcon,
   MinusIcon,
   PlusIcon,
+  Rows3Icon,
   SquareDashedIcon,
   SquareIcon,
 } from 'lucide-react'
@@ -40,6 +42,7 @@ import type {
   FontPrediction,
   Op,
   TextAlign,
+  TextDirection,
   TextShaderEffect,
   TextStrokeStyle,
   TextStyle,
@@ -274,6 +277,16 @@ export function RenderControlsPanel() {
     firstNode?.data.style?.textAlign ??
     (selectedNode?.data.translation ? 'center' : 'left')
 
+  // `directionOverride` is the explicit user choice; `renderedDirection` is
+  // what the automatic heuristic actually produced on the last render, used
+  // here only to show a sensible active button before any override is set.
+  const effectiveDirection: TextDirection | undefined =
+    selectedNode?.data.directionOverride ??
+    selectedNode?.data.renderedDirection ??
+    firstNode?.data.directionOverride ??
+    firstNode?.data.renderedDirection ??
+    undefined
+
   const currentFontPreviewState = useGoogleFontPreview(
     currentFontFace?.source === 'google' ? currentFont : (currentFontFamilyName ?? ''),
     currentFontFace?.source ?? 'system',
@@ -328,6 +341,38 @@ export function RenderControlsPanel() {
     applyStyleToNodes(textNodes, updates, 'Bulk style update')
   }
 
+  // `directionOverride` is a sibling of `style` on `TextDataPatch`, not
+  // nested inside it, so this goes through `ops.updateText` directly rather
+  // than `buildStyleOp`.
+  const applyDirectionToNodes = (
+    nodes: TextNodeEntry[],
+    direction: TextDirection,
+    label: string,
+  ) => {
+    if (!page || nodes.length === 0) return
+    void (async () => {
+      const op =
+        nodes.length === 1
+          ? ops.updateText(page.id, nodes[0].id, { directionOverride: direction })
+          : ops.batch(
+              label,
+              nodes.map((n) => ops.updateText(page.id, n.id, { directionOverride: direction })),
+            )
+      await applyOp(op)
+      queueAutoRender(page.id)
+    })()
+  }
+
+  const applyDirectionToSelected = (direction: TextDirection): boolean => {
+    if (selectedNodes.length === 0) return false
+    applyDirectionToNodes(selectedNodes, direction, 'Multi-block direction update')
+    return true
+  }
+
+  const applyDirectionToAll = (direction: TextDirection) => {
+    applyDirectionToNodes(textNodes, direction, 'Bulk direction update')
+  }
+
   const commitCurrentFontColorIfImplicit = () => {
     const targets = selectedNodes.length > 0 ? selectedNodes : textNodes
     if (targets.every(hasExplicitColor)) return
@@ -364,6 +409,15 @@ export function RenderControlsPanel() {
     { value: 'left', label: t('render.alignLeft'), Icon: AlignLeftIcon },
     { value: 'center', label: t('render.alignCenter'), Icon: AlignCenterIcon },
     { value: 'right', label: t('render.alignRight'), Icon: AlignRightIcon },
+  ]
+
+  const directionItems: {
+    value: TextDirection
+    label: string
+    Icon: ComponentType<{ className?: string }>
+  }[] = [
+    { value: 'vertical', label: t('render.directionVertical'), Icon: Columns3Icon },
+    { value: 'horizontal', label: t('render.directionHorizontal'), Icon: Rows3Icon },
   ]
 
   const scopeLabel =
@@ -661,6 +715,36 @@ export function RenderControlsPanel() {
                     onClick={() => {
                       if (applyStyleToSelected({ textAlign: item.value })) return
                       applyStyleToAll({ textAlign: item.value })
+                    }}
+                  >
+                    <Icon className='size-3' />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side='bottom' sideOffset={4}>
+                  {item.label}
+                </TooltipContent>
+              </Tooltip>
+            )
+          })}
+        </div>
+
+        <div className='flex items-center gap-0.5'>
+          {directionItems.map((item) => {
+            const active = effectiveDirection === item.value
+            const Icon = item.Icon
+            return (
+              <Tooltip key={item.value}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={active ? 'toggle_on' : 'toggle_off'}
+                    size='icon-sm'
+                    aria-label={item.label}
+                    data-testid={`render-direction-${item.value}`}
+                    disabled={!hasNodes}
+                    className={cn('size-6 shrink-0')}
+                    onClick={() => {
+                      if (applyDirectionToSelected(item.value)) return
+                      applyDirectionToAll(item.value)
                     }}
                   >
                     <Icon className='size-3' />

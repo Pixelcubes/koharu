@@ -262,6 +262,7 @@ fn text_to_psd(
         font_prediction: text.font_prediction.as_ref().map(convert_prediction),
         source_direction: text.source_direction.map(convert_dir),
         rendered_direction: text.rendered_direction.map(convert_dir),
+        direction_override: text.direction_override.map(convert_dir),
         detected_font_size_px: text.detected_font_size_px,
         font_index,
     }

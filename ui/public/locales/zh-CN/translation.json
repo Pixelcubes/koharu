@@ -198,6 +198,8 @@
     "alignLeft": "左对齐",
     "alignCenter": "居中对齐",
     "alignRight": "右对齐",
+    "directionVertical": "竖排（从上到下，从右到左）",
+    "directionHorizontal": "横排（从左到右）",
     "fontLabel": "字体",
     "fontPlaceholder": "选择字体",
     "fontColorLabel": "字体颜色",

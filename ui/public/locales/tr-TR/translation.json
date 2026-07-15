@@ -198,6 +198,8 @@
     "alignLeft": "Sola hizala",
     "alignCenter": "Ortala",
     "alignRight": "Sağa hizala",
+    "directionVertical": "Dikey (yukarıdan aşağıya, sağdan sola)",
+    "directionHorizontal": "Yatay (soldan sağa)",
     "effectItalic": "İtalik",
     "effectBold": "Kalın",
     "effectBorder": "Kenarlık",
