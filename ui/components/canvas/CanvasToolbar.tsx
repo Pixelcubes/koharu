@@ -5,6 +5,8 @@ import {
   LoaderCircleIcon,
   ScanIcon,
   ScanTextIcon,
+  SparklesIcon,
+  SquareIcon,
   TypeIcon,
   Wand2Icon,
 } from 'lucide-react'
@@ -25,6 +27,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  cancelOperation,
   deleteCurrentLlm,
   getConfig,
   putCurrentLlm,
@@ -34,7 +37,7 @@ import {
 } from '@/lib/api/default/default'
 import type { LlmCatalog, LlmCatalogModel, LlmProviderCatalog, LlmTarget } from '@/lib/api/schemas'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
-import { useJobsStore } from '@/lib/stores/jobsStore'
+import { type JobEntry, useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
 
@@ -92,6 +95,39 @@ function useIsProcessing(): boolean {
   return Object.values(jobs).some((j) => j.status === 'running')
 }
 
+/** Id of the currently-running job, if any — used to cancel it. */
+function useRunningJobId(): string | null {
+  const jobs = useJobsStore((s) => s.jobs)
+  for (const j of Object.values(jobs)) {
+    if (j.status === 'running') return j.id
+  }
+  return null
+}
+
+/**
+ * Resolve once `jobId` reaches a non-`running` status (SSE-driven, via
+ * `useJobsStore`). Checks the current store state first — the job may
+ * already have finished by the time the caller starts waiting — then
+ * subscribes for the transition. Used to sequence the auto-translate
+ * button's stages: `POST /pipelines` returns as soon as the run is
+ * accepted, not when it finishes, so awaiting the HTTP call alone doesn't
+ * wait for the stage to actually complete.
+ */
+function waitForJobSettled(jobId: string): Promise<JobEntry | undefined> {
+  return new Promise((resolve) => {
+    const check = (): boolean => {
+      const job = useJobsStore.getState().jobs[jobId]
+      if (!job || job.status === 'running') return false
+      resolve(job)
+      return true
+    }
+    if (check()) return
+    const unsubscribe = useJobsStore.subscribe(() => {
+      if (check()) unsubscribe()
+    })
+  })
+}
+
 function WorkflowButtons() {
   const { t } = useTranslation()
   const { data: llmState } = useGetCurrentLlm()
@@ -100,9 +136,15 @@ function WorkflowButtons() {
   const hasPage = pageId !== null
   const isProcessing = useIsProcessing()
   const currentStep = useCurrentStep()
+  const runningJobId = useRunningJobId()
+
+  type PipelinePick = (
+    p: NonNullable<Awaited<ReturnType<typeof getConfig>>['pipeline']>,
+  ) => string[]
 
   /**
-   * Run a pipeline step (or a small chain). `GET /config` is the single
+   * Start a pipeline step (or a small chain) and return its operation id,
+   * or `null` if there was nothing to run. `GET /config` is the single
    * source of truth for engine ids — every field has a serde default in
    * the Rust `PipelineConfig`, so we trust what the server returns and
    * never hard-code fallbacks here.
@@ -113,17 +155,15 @@ function WorkflowButtons() {
    * backend driver skips any step whose artifact is already satisfied,
    * so re-running is idempotent.
    */
-  const runStep = async (
-    pick: (p: NonNullable<Awaited<ReturnType<typeof getConfig>>['pipeline']>) => string[],
-  ) => {
-    if (!pageId) return
+  const startStep = async (pick: PipelinePick): Promise<string | null> => {
+    if (!pageId) return null
     const cfg = await getConfig()
-    if (!cfg.pipeline) return
+    if (!cfg.pipeline) return null
     const steps = pick(cfg.pipeline).filter((s): s is string => !!s)
-    if (steps.length === 0) return
+    if (steps.length === 0) return null
     const editor = useEditorUiStore.getState()
     const prefs = usePreferencesStore.getState()
-    await startPipeline({
+    const { operationId } = await startPipeline({
       steps,
       pages: [pageId],
       targetLanguage: editor.selectedLanguage,
@@ -131,11 +171,16 @@ function WorkflowButtons() {
       defaultFont: prefs.defaultFont,
       readingOrder: editor.readingOrder === 'custom' ? undefined : editor.readingOrder,
     })
+    return operationId
   }
 
-  type PipelinePick = (
-    p: NonNullable<Awaited<ReturnType<typeof getConfig>>['pipeline']>,
-  ) => string[]
+  // Thin wrapper for the five individual buttons below — fire-and-forget,
+  // exactly the previous behavior. Auto Translate uses `startStep`
+  // directly so it can wait for each stage to actually finish.
+  const runStep = async (pick: PipelinePick) => {
+    await startStep(pick)
+  }
+
   const detectChain: PipelinePick = (p) => [
     p.detector!,
     p.segmenter!,
@@ -147,11 +192,40 @@ function WorkflowButtons() {
   const inpaintChain: PipelinePick = (p) => [p.inpainter!]
   const renderChain: PipelinePick = (p) => [p.renderer!]
 
+  /**
+   * Run detect -> ocr -> translate -> inpaint -> render as five separate,
+   * sequential pipeline runs — waiting for each stage's job to actually
+   * finish (not just be accepted) before starting the next. A single
+   * combined `startPipeline` call was tried first, but the backend
+   * resolves execution order from a dependency DAG, not the literal step
+   * order it's given (see `build_order` in `koharu-app/src/pipeline/
+   * engine.rs`) — steps with no forced relationship (e.g. OCR/translate
+   * vs. segment/font-detect, which only depend on detect, not on each
+   * other) can interleave, so the toolbar's step indicator could flash
+   * Detect -> OCR -> Translate -> Detect again -> Inpaint -> Render.
+   * Five separate runs guarantee the clean, visible sequence the button
+   * groups imply. Stops the whole chain if a stage fails or is cancelled,
+   * rather than pressing on with steps whose inputs never got produced.
+   */
+  const runAutoTranslateSequential = async () => {
+    for (const pick of [detectChain, ocrChain, translateChain, inpaintChain, renderChain]) {
+      const operationId = await startStep(pick)
+      if (!operationId) continue
+      const job = await waitForJobSettled(operationId)
+      if (job?.status === 'failed' || job?.status === 'cancelled') return
+    }
+  }
+
   const isDetecting = currentStep === 'detect'
   const isOcr = currentStep === 'ocr'
   const isInpainting = currentStep === 'inpaint'
   const isTranslating = currentStep === 'llmGenerate'
   const isRendering = currentStep === 'render'
+
+  const handleStop = async () => {
+    if (!runningJobId) return
+    await cancelOperation(runningJobId)
+  }
 
   return (
     <div className='flex items-center gap-0.5'>
@@ -228,6 +302,21 @@ function WorkflowButtons() {
           <TypeIcon className='size-4' />
         )}
         {t('llm.render')}
+      </Button>
+      <Separator orientation='vertical' className='mx-1.5 h-4' />
+      <Button
+        variant={isProcessing ? 'destructive' : 'ghost'}
+        size='xs'
+        onClick={() => (isProcessing ? void handleStop() : void runAutoTranslateSequential())}
+        data-testid='toolbar-auto-translate'
+        disabled={isProcessing ? !runningJobId : !hasPage || !llmReady}
+      >
+        {isProcessing ? (
+          <SquareIcon className='size-4' />
+        ) : (
+          <SparklesIcon className='size-4' />
+        )}
+        {isProcessing ? t('processing.stop') : t('processing.autoTranslate')}
       </Button>
     </div>
   )

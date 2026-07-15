@@ -250,6 +250,110 @@ mod tests {
 
     use super::*;
 
+    fn dummy_load(_: &RuntimeManager, _: bool) -> BoxFuture<'_, Result<Box<dyn Engine>>> {
+        Box::pin(async { anyhow::bail!("unused in test") })
+    }
+
+    /// Locks in `build_order`'s actual behavior for the full detect -> ocr ->
+    /// translate -> inpaint -> render engine set. This is a DAG resolver, not
+    /// a literal replay of the input order: engines with no forced
+    /// dependency relationship (e.g. `ocr`/`translator` vs. `font_detector`/
+    /// `segmenter`, which only depend on `detector`, not on each other) can
+    /// interleave. In particular `segmenter` — conceptually part of
+    /// "detect" — actually runs right before `inpainter`, after `ocr` and
+    /// `translator`, not grouped with `detector`/`font_detector` up front.
+    /// If a future engine's `needs`/`produces` changes this order, this test
+    /// should fail so the change is visible and intentional.
+    #[test]
+    fn auto_translate_chain_resolves_to_expected_dag_order() {
+        let detector = EngineInfo {
+            id: "detector",
+            name: "detector",
+            needs: &[],
+            produces: &[Artifact::TextBoxes],
+            load: dummy_load,
+        };
+        let segmenter = EngineInfo {
+            id: "segmenter",
+            name: "segmenter",
+            needs: &[Artifact::TextBoxes],
+            produces: &[Artifact::SegmentMask],
+            load: dummy_load,
+        };
+        let bubble_segmenter = EngineInfo {
+            id: "bubble_segmenter",
+            name: "bubble_segmenter",
+            needs: &[],
+            produces: &[Artifact::BubbleMask],
+            load: dummy_load,
+        };
+        let font_detector = EngineInfo {
+            id: "font_detector",
+            name: "font_detector",
+            needs: &[Artifact::TextBoxes],
+            produces: &[Artifact::FontPredictions],
+            load: dummy_load,
+        };
+        let ocr = EngineInfo {
+            id: "ocr",
+            name: "ocr",
+            needs: &[Artifact::TextBoxes],
+            produces: &[Artifact::OcrText],
+            load: dummy_load,
+        };
+        let translator = EngineInfo {
+            id: "translator",
+            name: "translator",
+            needs: &[Artifact::OcrText],
+            produces: &[Artifact::Translations],
+            load: dummy_load,
+        };
+        let inpainter = EngineInfo {
+            id: "inpainter",
+            name: "inpainter",
+            needs: &[Artifact::SegmentMask, Artifact::BubbleMask],
+            produces: &[Artifact::Inpainted],
+            load: dummy_load,
+        };
+        let renderer = EngineInfo {
+            id: "renderer",
+            name: "renderer",
+            needs: &[
+                Artifact::Inpainted,
+                Artifact::Translations,
+                Artifact::FontPredictions,
+            ],
+            produces: &[Artifact::FinalRender],
+            load: dummy_load,
+        };
+
+        let infos = [
+            &detector,
+            &segmenter,
+            &bubble_segmenter,
+            &font_detector,
+            &ocr,
+            &translator,
+            &inpainter,
+            &renderer,
+        ];
+        let order = build_order(&infos).unwrap();
+        let ids: Vec<&str> = order.iter().map(|&i| infos[i].id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "bubble_segmenter",
+                "detector",
+                "ocr",
+                "translator",
+                "font_detector",
+                "segmenter",
+                "inpainter",
+                "renderer",
+            ]
+        );
+    }
+
     #[test]
     fn emit_warning_dispatches_to_sink_with_correct_fields() {
         let received: Arc<Mutex<Vec<WarningTick>>> = Arc::new(Mutex::new(Vec::new()));
