@@ -155,6 +155,6 @@ For background theory behind the model categories on this page, see:
 
     This reproduces reliably on ordinary manga bubbles, not just unusual layouts. Until the detector emits per-line polygons, prefer `PaddleOCR-VL-1.5` (multilingual, general-purpose) or `Manga OCR` (Japanese-only, but accurate on real Japanese manga dialogue) instead of `mit48px-ocr`.
 
-!!! warning "Known bug: PaddleOCR-VL misrecognises certain stylised SFX texts
+!!! warning "Known bug: PaddleOCR-VL misrecognises certain stylised SFX texts"
 
-    for certain SFX texts (e.g. a concrete example: "HEH-HEHE"), it is misrecognised in OCR as "工工工工工工工工"
+    for certain SFX texts (e.g. a concrete example: "HEH-HEHE"), it is misrecognised in OCR as "工工工工工工工工". Generally PaddleOCR-VL works very well and handles most cases perfectly, however in edge cases like this, the quick workaround is to manually input the text in the text block field.
