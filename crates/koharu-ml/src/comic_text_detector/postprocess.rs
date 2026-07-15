@@ -6,10 +6,24 @@ use image::{
 use imageproc::{
     distance_transform::Norm,
     geometric_transformations::{Interpolation, Projection, warp_into},
-    morphology::dilate,
+    morphology::{close, dilate},
 };
 
 const FINAL_MASK_DILATE_RADIUS: u8 = 2;
+// Bridges small gaps left by the segmentation net under-predicting glyph
+// pixels over busy/textured backgrounds (see `refine_segmentation_mask`).
+// Closing (dilate-then-erode) only fills holes near existing mask pixels
+// and is "extensive" (it never removes an already-detected pixel), so
+// unlike plain dilation it can't turn this into a broad region-fill (that
+// approach was tried for AOT/Lama and reverted, see 8e92960f).
+//
+// The radius scales with each block's own detected font size instead of
+// being a fixed pixel count: manga pages vary enormously in resolution
+// and lettering size, so a fixed radius would be negligible on a large
+// high-res scan and too aggressive on a small/low-res one.
+const HOLE_CLOSE_FONT_RATIO: f32 = 0.08;
+const HOLE_CLOSE_MIN_RADIUS: u8 = 1;
+const HOLE_CLOSE_MAX_RADIUS: u8 = 6;
 
 pub type Quad = [[f32; 2]; 4];
 
@@ -63,7 +77,29 @@ pub fn refine_segmentation_mask(
         }
     });
 
-    let dilated = dilate(&base, Norm::L1, FINAL_MASK_DILATE_RADIUS);
+    // Close gaps per block, scaled to that block's own font size, rather
+    // than one fixed radius for the whole page — a page can mix tiny SFX
+    // lettering with large splash-panel text.
+    let mut closed = base.clone();
+    for (block, &bounds) in blocks.iter().zip(&expanded_bounds) {
+        let radius = hole_close_radius(block);
+        let padded = expand_rect(bounds, width, height, u32::from(radius));
+        if count_nonzero_in_rect(&base, padded) == 0 {
+            continue;
+        }
+        let crop = imageops::crop_imm(
+            &base,
+            padded[0],
+            padded[1],
+            padded[2] - padded[0],
+            padded[3] - padded[1],
+        )
+        .to_image();
+        let local_closed = close(&crop, Norm::LInf, radius);
+        merge_local_closed(&mut closed, &local_closed, padded, bounds);
+    }
+
+    let dilated = dilate(&closed, Norm::L1, FINAL_MASK_DILATE_RADIUS);
 
     // Final clipping pass: Ensure the dilated mask never escapes the block boundaries
     // even if it thickens beyond its original source pixel edges.
@@ -74,6 +110,60 @@ pub fn refine_segmentation_mask(
             Luma([0])
         }
     })
+}
+
+fn hole_close_radius(block: &TextRegion) -> u8 {
+    let font = block
+        .detected_font_size_px
+        .unwrap_or_else(|| block.width.min(block.height).max(1.0));
+    ((font * HOLE_CLOSE_FONT_RATIO).round() as u8)
+        .clamp(HOLE_CLOSE_MIN_RADIUS, HOLE_CLOSE_MAX_RADIUS)
+}
+
+fn expand_rect([x1, y1, x2, y2]: [u32; 4], width: u32, height: u32, pad: u32) -> [u32; 4] {
+    [
+        x1.saturating_sub(pad),
+        y1.saturating_sub(pad),
+        x2.saturating_add(pad).min(width),
+        y2.saturating_add(pad).min(height),
+    ]
+}
+
+fn count_nonzero_in_rect(mask: &GrayImage, [x1, y1, x2, y2]: [u32; 4]) -> u32 {
+    let mut count = 0;
+    for y in y1..y2 {
+        for x in x1..x2 {
+            if mask.get_pixel(x, y).0[0] > 0 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// Merges a locally-closed crop back into the page mask, restricted to the
+// block's own (unpadded) bounds so one block's closing can't spill into a
+// neighboring block's territory even when their padded working windows
+// overlap. Only ever sets pixels (never clears), matching closing's
+// extensive property — the original `base` detections underneath are
+// never lost even at crop-window edges.
+fn merge_local_closed(out: &mut GrayImage, local: &GrayImage, padded: [u32; 4], clip: [u32; 4]) {
+    for local_y in 0..local.height() {
+        let y = padded[1] + local_y;
+        if y < clip[1] || y >= clip[3] {
+            continue;
+        }
+        for local_x in 0..local.width() {
+            if local.get_pixel(local_x, local_y).0[0] == 0 {
+                continue;
+            }
+            let x = padded[0] + local_x;
+            if x < clip[0] || x >= clip[2] {
+                continue;
+            }
+            out.put_pixel(x, y, Luma([255]));
+        }
+    }
 }
 
 pub fn crop_text_block_bbox(image: &DynamicImage, block: &TextRegion) -> DynamicImage {
@@ -109,24 +199,13 @@ pub fn expanded_text_block_crop_bounds(
     image_height: u32,
     block: &TextRegion,
 ) -> [u32; 4] {
-    let should_expand = block.detector.as_deref() == Some("ctd")
-        || block
-            .line_polygons
-            .as_ref()
-            .map(|lines| !lines.is_empty())
-            .unwrap_or(false);
-    if !should_expand {
-        let x1 = block.x.max(0.0).floor() as u32;
-        let y1 = block.y.max(0.0).floor() as u32;
-        let x2 = (block.x + block.width)
-            .ceil()
-            .clamp(x1 as f32 + 1.0, image_width as f32) as u32;
-        let y2 = (block.y + block.height)
-            .ceil()
-            .clamp(y1 as f32 + 1.0, image_height as f32) as u32;
-        return [x1, y1, x2, y2];
-    }
-
+    // Every detector gets the same small, font-scaled padding here, not
+    // just "ctd" — this box is used as a hard clip on the erase mask (see
+    // `refine_segmentation_mask`), both before and after gap-closing runs.
+    // A zero-slack box silently re-excludes glyph pixels regardless of how
+    // good the mask/closing logic is if the detector's box is off by even
+    // a couple pixels, which is normal localization jitter for any
+    // detector, not something specific to CTD's shrink-map under-reporting.
     let mut min_x = block.x;
     let mut min_y = block.y;
     let mut max_x = block.x + block.width;
@@ -340,6 +419,90 @@ mod tests {
     }
 
     #[test]
+    fn refine_segmentation_mask_closes_small_internal_gaps() {
+        // Simulates a glyph stroke over a busy background where the
+        // segmentation net under-predicted a small patch in the middle of
+        // an otherwise well-detected region (below BINARY_THRESHOLD there,
+        // at/above it everywhere around it).
+        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(40, 40, Rgb([255, 255, 255])));
+        let pred_mask = GrayImage::from_fn(40, 40, |x, y| {
+            let in_glyph = (10..30).contains(&x) && (10..30).contains(&y);
+            let in_gap = (18..20).contains(&x) && (18..20).contains(&y);
+            if in_glyph && !in_gap {
+                Luma([200])
+            } else {
+                Luma([0])
+            }
+        });
+
+        let block = TextRegion {
+            x: 8.0,
+            y: 8.0,
+            width: 24.0,
+            height: 24.0,
+            detected_font_size_px: Some(24.0),
+            ..Default::default()
+        };
+
+        let mask = refine_segmentation_mask(&image, &pred_mask, &[block]);
+
+        // The under-predicted gap in the middle of the glyph is bridged.
+        assert_eq!(mask.get_pixel(18, 18)[0], 255);
+        assert_eq!(mask.get_pixel(19, 19)[0], 255);
+        // Closing must not have grown the mask far beyond the glyph's own
+        // footprint into unrelated background outside the text block.
+        assert_eq!(mask.get_pixel(2, 2)[0], 0);
+        assert_eq!(mask.get_pixel(38, 38)[0], 0);
+    }
+
+    #[test]
+    fn refine_segmentation_mask_close_radius_scales_with_font_size() {
+        // A large-font block's gap is wide enough that a small, fixed
+        // radius wouldn't bridge it; the font-scaled radius should still
+        // close it (this is the case a flat pixel constant would miss on
+        // a high-res page with large lettering).
+        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(60, 60, Rgb([255, 255, 255])));
+        let gap_mask = GrayImage::from_fn(60, 60, |x, y| {
+            let in_glyph = (10..40).contains(&x) && (10..40).contains(&y);
+            let in_gap = (20..30).contains(&x) && (20..30).contains(&y);
+            if in_glyph && !in_gap {
+                Luma([200])
+            } else {
+                Luma([0])
+            }
+        });
+        let large_font_block = TextRegion {
+            x: 8.0,
+            y: 8.0,
+            width: 34.0,
+            height: 34.0,
+            detected_font_size_px: Some(150.0), // clamps to HOLE_CLOSE_MAX_RADIUS
+            ..Default::default()
+        };
+        let mask = refine_segmentation_mask(&image, &gap_mask, &[large_font_block.clone()]);
+        assert_eq!(
+            mask.get_pixel(25, 25)[0],
+            255,
+            "large-font gap should be bridged"
+        );
+
+        // The same absolute gap next to a tiny-font block should NOT be
+        // bridged: at that scale a gap this size relative to the glyph is
+        // more likely real background than an under-predicted pixel, and
+        // a fixed "always aggressive" radius would incorrectly erase it.
+        let small_font_block = TextRegion {
+            detected_font_size_px: Some(10.0), // clamps to HOLE_CLOSE_MIN_RADIUS
+            ..large_font_block
+        };
+        let mask = refine_segmentation_mask(&image, &gap_mask, &[small_font_block]);
+        assert_eq!(
+            mask.get_pixel(25, 25)[0],
+            0,
+            "small-font gap should stay open"
+        );
+    }
+
+    #[test]
     fn refine_segmentation_mask_clips_outside_blocks() {
         let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(32, 32, Rgb([255, 255, 255])));
         let pred_mask = GrayImage::from_fn(32, 32, |x, y| {
@@ -350,12 +513,14 @@ mod tests {
             }
         });
 
+        // No `detector` set, so this exercises the default (e.g.
+        // pp-doclayout-v3) path, not the old "ctd" special case.
         let block = TextRegion {
             x: 10.0,
             y: 11.0,
-            width: 4.0, // Limits to roughly [10, 11] to [14, 15]
+            width: 4.0, // raw bbox roughly [10, 11] to [14, 15]
             height: 4.0,
-            detected_font_size_px: Some(4.0),
+            detected_font_size_px: Some(4.0), // pads by ~2px on each side
             ..Default::default()
         };
 
@@ -366,10 +531,15 @@ mod tests {
         assert_ne!(mask, without_blocks);
         // Assert pixel INSIDE the block is preserved
         assert_eq!(mask.get_pixel(12, 13)[0], 255);
-        // Assert pixel OUTSIDE the block (but inside high-prob region) is cleared
+        // Assert pixel well outside the block, beyond even the padding, is cleared
         assert_eq!(mask.get_pixel(20, 13)[0], 0);
-        // Assert pixel JUST OUTSIDE the block boundary is cleared
-        assert_eq!(mask.get_pixel(15, 13)[0], 0);
+        // A pixel just outside the RAW detector box, but within the small
+        // font-scaled padding, is preserved. Every detector's box gets
+        // this padding now, not just "ctd" — any detector's box can be
+        // off by a couple pixels, and a zero-slack clip would silently
+        // re-exclude real glyph pixels no matter how good the mask or
+        // gap-closing step is.
+        assert_eq!(mask.get_pixel(15, 13)[0], 255);
     }
 
     #[test]
@@ -383,10 +553,14 @@ mod tests {
             ..Default::default()
         };
 
+        // No detector/line_polygons set, so this crop now also gets the
+        // small font-scaled padding (font falls back to min(width, height)
+        // = 8 here), rather than the exact raw box: every detector's crop
+        // gets a little slack now, not just "ctd".
         let regions = extract_text_block_regions(&image, &block);
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].width(), 10);
-        assert_eq!(regions[0].height(), 8);
+        assert_eq!(regions[0].width(), 14);
+        assert_eq!(regions[0].height(), 12);
     }
 
     #[test]
